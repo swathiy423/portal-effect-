@@ -1,38 +1,76 @@
-# Doctor Strange Portal Effect
+# Doctor Strange Portal
 
-A real-time visual effect using your webcam to create Doctor Strange style magical runes and portals using hand gestures!
+A browser-based hand gesture experiment inspired by magical portal effects.
 
-## Installation
+The project uses your webcam and hand tracking to create animated magical circles, sparks, particles, and a portal that can be activated using hand gestures.
 
-1. Install Python 3.
-2. Install the required dependencies:
-   ```bash
-   pip install -r requirements.txt
-   ```
+Everything runs directly in the browser, so there is no Python backend or server-side processing required.
 
-## How to Run
+## Live Demo
 
-Run the script from your terminal:
-```bash
-python app.py
-# (Or python3 app.py depending on your installation)
-```
+Run the project directly in your browser:
 
-## How to Use
+https://YOUR-VERCEL-LINK.vercel.app/
 
-1. **Open Palm**: Hold your palm open to reveal small magical hand runes around your hand.
-2. **Open Portal**: Make a **fist with your left hand** and draw a **circle with your right index finger** to open a magical portal!
-3. **Quit**: Press the `q` key or `ESC` on your keyboard to close the application.
+## How It Works
 
-## Troubleshooting the Camera
+The application uses the webcam to detect hand landmarks in real time.
 
-If the script runs but your camera doesn't turn on (or the wrong camera is selected), you will need to change the camera index in the code.
+Different hand gestures trigger different visual effects:
 
-1. Open `app.py` in your code editor.
-2. Go to around **line 237** and look for this line:
-   ```python
-   cap = cv2.VideoCapture(1)
-   ```
-3. Change the `1` inside `cv2.VideoCapture()` to `0` or `2` depending on which webcam you want to use.
-   - `0` is usually the default built-in webcam.
-   - `1`, `2`, etc. are usually external webcams or virtual cameras.
+- Open palm → magical hand runes
+- Left fist → enables portal drawing mode
+- Right index finger → draws the portal circle
+- Completed circle → activates the portal
+- Portal active → animated runes, particles, sparks, and rotating symbols
+
+## Controls
+
+### Open Palm
+
+Show an open palm to the camera.
+
+The application displays a magical circular rune around the hand.
+
+Both hands can generate the effect independently.
+
+### Draw the Portal
+
+1. Make a fist with your left hand.
+2. Keep the fist visible.
+3. Use your right index finger to draw a circle.
+4. Complete the circle.
+
+Once a sufficiently large closed circle is detected, the portal activates.
+
+### Portal
+
+After the circle is detected, the application generates:
+
+- Rotating rune segments
+- Geometric symbols
+- Multiple circular layers
+- Radial markings
+- Glowing particles
+- Spark effects
+- A pulsing center
+
+## Tech Stack
+
+- HTML
+- CSS
+- JavaScript
+- MediaPipe Hands
+- Canvas 2D API
+- Browser Web Camera API
+- Vercel
+
+## Project Structure
+
+```text
+doctor-strange-portal/
+│
+├── index.html
+├── app.js
+├── style.css
+└── README.md
