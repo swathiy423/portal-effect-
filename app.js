@@ -9,19 +9,10 @@ const startButton = document.getElementById("startButton");
 const statusDot = document.getElementById("statusDot");
 const statusText = document.getElementById("statusText");
 
+let hands;
+let camera;
 
-let camera = null;
-
-let hands = null;
-
-let running = false;
-
-let startTime = performance.now();
-let lastTime = performance.now();
-
-
-let leftFistPresent = false;
-let rightHand = null;
+let detectedHands = [];
 
 let drawingPoints = [];
 
@@ -34,19 +25,17 @@ let portalCenter = {
 
 let portalRadius = 0;
 
-let portalIntensity = 0;
-
+let portalStrength = 0;
 
 const sparks = [];
-const portalParticles = [];
+const particles = [];
 
 
-// --------------------------------------------------
-// Utility
-// --------------------------------------------------
+// ==================================================
+// BASIC UTILITIES
+// ==================================================
 
 function distance(a, b) {
-
     return Math.hypot(
         a.x - b.x,
         a.y - b.y
@@ -54,458 +43,384 @@ function distance(a, b) {
 }
 
 
-function clamp(value, min, max) {
+function getCanvasPoint(point) {
 
-    return Math.max(
-        min,
-        Math.min(max, value)
-    );
+    return {
+        x: point.x * canvas.width,
+        y: point.y * canvas.height
+    };
 }
 
 
-// --------------------------------------------------
-// Hand detection
-// --------------------------------------------------
+// ==================================================
+// HAND DETECTION
+// ==================================================
 
-function isPalmOpen(landmarks) {
+function isOpenHand(hand) {
 
-    const wrist = landmarks[0];
+    /*
+        MediaPipe landmarks:
+
+        0  = wrist
+        4  = thumb
+        8  = index
+        12 = middle
+        16 = ring
+        20 = pinky
+    */
+
+    const wrist = hand[0];
+
+    const fingers = [
+        [8, 5],
+        [12, 9],
+        [16, 13],
+        [20, 17]
+    ];
 
     let extended = 0;
 
-    const tips = [8, 12, 16, 20];
-    const mcps = [5, 9, 13, 17];
+    for (const [tipIndex, baseIndex] of fingers) {
 
+        const tip = hand[tipIndex];
+        const base = hand[baseIndex];
 
-    for (let i = 0; i < tips.length; i++) {
+        const tipDistance =
+            distance(tip, wrist);
 
-        const tip = landmarks[tips[i]];
-        const mcp = landmarks[mcps[i]];
+        const baseDistance =
+            distance(base, wrist);
 
-        const tipDistance = distance(
-            tip,
-            wrist
-        );
-
-        const mcpDistance = distance(
-            mcp,
-            wrist
-        );
-
-
-        if (tipDistance > mcpDistance * 1.3) {
+        if (
+            tipDistance >
+            baseDistance * 1.25
+        ) {
 
             extended++;
         }
     }
 
+    /*
+        We mainly care about the four
+        fingers. This is much more reliable
+        than the previous thumb test.
+    */
 
-    const thumbTip = landmarks[4];
-    const thumbIP = landmarks[3];
-
-
-    if (
-        Math.abs(thumbTip.x - thumbIP.x) > 0.025 ||
-        Math.abs(thumbTip.y - thumbIP.y) > 0.025
-    ) {
-
-        extended++;
-    }
-
-
-    return extended >= 4;
+    return extended >= 3;
 }
 
 
-function isFist(landmarks) {
+function isFist(hand) {
 
-    const wrist = landmarks[0];
+    const wrist = hand[0];
+
+    const tips = [
+        8,
+        12,
+        16,
+        20
+    ];
+
+    const bases = [
+        5,
+        9,
+        13,
+        17
+    ];
 
     let curled = 0;
 
-    const tips = [8, 12, 16, 20];
-    const mcps = [5, 9, 13, 17];
-
-
     for (let i = 0; i < tips.length; i++) {
 
-        const tip = landmarks[tips[i]];
-        const mcp = landmarks[mcps[i]];
+        const tip = hand[tips[i]];
+        const base = hand[bases[i]];
 
+        const tipDistance =
+            distance(tip, wrist);
 
-        const tipDistance = distance(
-            tip,
-            wrist
-        );
+        const baseDistance =
+            distance(base, wrist);
 
-        const mcpDistance = distance(
-            mcp,
-            wrist
-        );
-
-
-        if (tipDistance < mcpDistance * 1.1) {
+        if (
+            tipDistance <
+            baseDistance * 1.15
+        ) {
 
             curled++;
         }
     }
 
-
     return curled >= 3;
 }
 
 
-function palmCenter(landmarks) {
+// ==================================================
+// MEDIAPIPE CALLBACK
+// ==================================================
 
-    const wrist = landmarks[0];
-    const middle = landmarks[9];
+function onResults(results) {
 
+    detectedHands = [];
+
+    if (
+        !results.multiHandLandmarks ||
+        results.multiHandLandmarks.length === 0
+    ) {
+
+        return;
+    }
+
+    for (
+        let i = 0;
+        i < results.multiHandLandmarks.length;
+        i++
+    ) {
+
+        const landmarks =
+            results.multiHandLandmarks[i];
+
+        let handedness = "Unknown";
+
+        if (
+            results.multiHandedness &&
+            results.multiHandedness[i]
+        ) {
+
+            handedness =
+                results
+                    .multiHandedness[i]
+                    .classification[0]
+                    .label;
+        }
+
+        detectedHands.push({
+            landmarks,
+            handedness,
+            open: isOpenHand(landmarks),
+            fist: isFist(landmarks)
+        });
+    }
+}
+
+
+// ==================================================
+// DRAW HAND TRACKING
+// ==================================================
+
+function drawHandTracking() {
+
+    for (const hand of detectedHands) {
+
+        const landmarks =
+            hand.landmarks;
+
+        /*
+            Index fingertip
+        */
+
+        const index =
+            getCanvasPoint(
+                landmarks[8]
+            );
+
+
+        /*
+            Visible tracking point.
+
+            If you see this yellow point
+            following your finger, MediaPipe
+            is working.
+        */
+
+        ctx.save();
+
+        ctx.beginPath();
+
+        ctx.arc(
+            index.x,
+            index.y,
+            8,
+            0,
+            Math.PI * 2
+        );
+
+        ctx.fillStyle =
+            "#ffd166";
+
+        ctx.shadowColor =
+            "#ff8c00";
+
+        ctx.shadowBlur = 20;
+
+        ctx.fill();
+
+        ctx.restore();
+
+
+        /*
+            Small points on all landmarks
+        */
+
+        for (const landmark of landmarks) {
+
+            const p =
+                getCanvasPoint(
+                    landmark
+                );
+
+            ctx.save();
+
+            ctx.fillStyle =
+                "rgba(255,190,70,0.5)";
+
+            ctx.beginPath();
+
+            ctx.arc(
+                p.x,
+                p.y,
+                2,
+                0,
+                Math.PI * 2
+            );
+
+            ctx.fill();
+
+            ctx.restore();
+        }
+    }
+}
+
+
+// ==================================================
+// HAND CENTER
+// ==================================================
+
+function getHandCenter(hand) {
+
+    const wrist = hand[0];
+    const middle = hand[9];
 
     return {
-        x: ((wrist.x + middle.x) / 2) * canvas.width,
-        y: ((wrist.y + middle.y) / 2) * canvas.height
+        x:
+            ((wrist.x + middle.x) / 2)
+            * canvas.width,
+
+        y:
+            ((wrist.y + middle.y) / 2)
+            * canvas.height
     };
 }
 
 
-function palmSize(landmarks) {
+function getHandRadius(hand) {
 
-    const wrist = landmarks[0];
-    const middle = landmarks[9];
+    const wrist = hand[0];
+    const middle = hand[9];
 
-
-    return Math.sqrt(
-        Math.pow(
-            (wrist.x - middle.x) * canvas.width,
-            2
-        ) +
-        Math.pow(
-            (wrist.y - middle.y) * canvas.height,
-            2
-        )
+    return distance(
+        {
+            x: wrist.x * canvas.width,
+            y: wrist.y * canvas.height
+        },
+        {
+            x: middle.x * canvas.width,
+            y: middle.y * canvas.height
+        }
     );
 }
 
 
-// --------------------------------------------------
-// Circle gesture
-// --------------------------------------------------
-
-function checkCircleGesture(
-    points,
-    minPerimeter = 250,
-    closeThreshold = 50
-) {
-
-    if (points.length < 20) {
-
-        return {
-            detected: false
-        };
-    }
-
-
-    const end = points[points.length - 1];
-
-    let pathDistance = 0;
-
-
-    for (
-        let i = points.length - 2;
-        i >= 0;
-        i--
-    ) {
-
-        const a = points[i];
-        const b = points[i + 1];
-
-
-        pathDistance += Math.hypot(
-            b.x - a.x,
-            b.y - a.y
-        );
-
-
-        if (pathDistance > minPerimeter) {
-
-            const distanceToOld = Math.hypot(
-                end.x - a.x,
-                end.y - a.y
-            );
-
-
-            if (distanceToOld < closeThreshold) {
-
-                const loop = points.slice(i);
-
-                let cx = 0;
-                let cy = 0;
-
-
-                for (const point of loop) {
-
-                    cx += point.x;
-                    cy += point.y;
-                }
-
-
-                cx /= loop.length;
-                cy /= loop.length;
-
-
-                const radii = loop.map(point =>
-                    Math.hypot(
-                        point.x - cx,
-                        point.y - cy
-                    )
-                );
-
-
-                const averageRadius =
-                    radii.reduce(
-                        (sum, value) => sum + value,
-                        0
-                    ) / radii.length;
-
-
-                return {
-                    detected: true,
-                    center: {
-                        x: cx,
-                        y: cy
-                    },
-                    radius: averageRadius
-                };
-            }
-        }
-    }
-
-
-    return {
-        detected: false
-    };
-}
-
-
-// --------------------------------------------------
-// Spark
-// --------------------------------------------------
-
-class Spark {
-
-    constructor(x, y) {
-
-        this.x = x;
-        this.y = y;
-
-        this.vx =
-            (Math.random() * 4) - 2;
-
-        this.vy =
-            (Math.random() * 4) - 1;
-
-        this.life =
-            0.3 +
-            Math.random() * 0.3;
-
-        this.maxLife =
-            this.life;
-
-        this.size =
-            2 +
-            Math.floor(Math.random() * 3);
-    }
-
-
-    update(dt) {
-
-        this.x += this.vx;
-
-        this.y += this.vy;
-
-        this.life -= dt;
-
-        return this.life > 0;
-    }
-
-
-    draw() {
-
-        const alpha =
-            clamp(
-                this.life / this.maxLife,
-                0,
-                1
-            );
-
-
-        ctx.save();
-
-        ctx.globalAlpha = alpha;
-
-        ctx.fillStyle = "#ffb52e";
-
-        ctx.shadowColor = "#ff8c1a";
-
-        ctx.shadowBlur = 10;
-
-        ctx.beginPath();
-
-        ctx.arc(
-            this.x,
-            this.y,
-            this.size,
-            0,
-            Math.PI * 2
-        );
-
-        ctx.fill();
-
-        ctx.restore();
-    }
-}
-
-
-// --------------------------------------------------
-// Portal particle
-// --------------------------------------------------
-
-class Particle {
-
-    constructor(
-        centerX,
-        centerY,
-        radius
-    ) {
-
-        const angle =
-            Math.random() *
-            Math.PI *
-            2;
-
-
-        const r =
-            radius *
-            (
-                0.9 +
-                Math.random() * 0.2
-            );
-
-
-        this.x =
-            centerX +
-            r * Math.cos(angle);
-
-        this.y =
-            centerY +
-            r * Math.sin(angle);
-
-
-        this.vx =
-            (Math.random() * 3) - 1.5;
-
-        this.vy =
-            (Math.random() * 3) - 1.5;
-
-
-        this.life =
-            0.3 +
-            Math.random() * 0.7;
-
-        this.maxLife =
-            this.life;
-
-
-        this.size =
-            1 +
-            Math.floor(
-                Math.random() * 3
-            );
-    }
-
-
-    update(dt) {
-
-        this.x += this.vx;
-
-        this.y += this.vy;
-
-        this.life -= dt;
-
-        return this.life > 0;
-    }
-
-
-    draw() {
-
-        const alpha =
-            clamp(
-                this.life / this.maxLife,
-                0,
-                1
-            );
-
-
-        ctx.save();
-
-        ctx.globalAlpha = alpha;
-
-        ctx.fillStyle = "#ffd27a";
-
-        ctx.shadowColor = "#ff8c1a";
-
-        ctx.shadowBlur = 8;
-
-        ctx.beginPath();
-
-        ctx.arc(
-            this.x,
-            this.y,
-            this.size,
-            0,
-            Math.PI * 2
-        );
-
-        ctx.fill();
-
-        ctx.restore();
-    }
-}
-
-
-// --------------------------------------------------
-// Rune segments
-// --------------------------------------------------
-
-function drawRuneSegments(
-    cx,
-    cy,
+// ==================================================
+// MAGIC CIRCLE
+// ==================================================
+
+function drawMagicCircle(
+    x,
+    y,
     radius,
     rotation,
-    segments,
-    thickness,
-    alpha
+    strength = 1
 ) {
 
-    const segmentAngle =
-        (Math.PI * 2) /
-        segments;
-
-    const arcLength =
-        segmentAngle * 0.4;
-
+    if (radius < 30) {
+        return;
+    }
 
     ctx.save();
 
-    ctx.globalAlpha = alpha;
+    ctx.globalAlpha =
+        strength;
 
-    ctx.strokeStyle = "#ffb52e";
 
-    ctx.lineWidth = thickness;
+    /*
+        Outer glow
+    */
 
-    ctx.shadowColor = "#ff8c1a";
+    ctx.shadowColor =
+        "#ff8c00";
 
-    ctx.shadowBlur = 8;
+    ctx.shadowBlur =
+        25;
+
+    ctx.strokeStyle =
+        "#ffb52e";
+
+    ctx.lineWidth =
+        3;
+
+
+    ctx.beginPath();
+
+    ctx.arc(
+        x,
+        y,
+        radius,
+        0,
+        Math.PI * 2
+    );
+
+    ctx.stroke();
+
+
+    /*
+        Second ring
+    */
+
+    ctx.shadowBlur =
+        15;
+
+    ctx.lineWidth =
+        1.5;
+
+    ctx.strokeStyle =
+        "#ffe6a1";
+
+
+    ctx.beginPath();
+
+    ctx.arc(
+        x,
+        y,
+        radius * 0.86,
+        0,
+        Math.PI * 2
+    );
+
+    ctx.stroke();
+
+
+    /*
+        Rotating rune segments
+    */
+
+    const segments = 24;
+
+    const segmentAngle =
+        Math.PI * 2 /
+        segments;
+
+
+    ctx.lineWidth = 2;
 
 
     for (
@@ -520,15 +435,15 @@ function drawRuneSegments(
 
         const end =
             start +
-            arcLength;
+            segmentAngle * 0.55;
 
 
         ctx.beginPath();
 
         ctx.arc(
-            cx,
-            cy,
-            radius,
+            x,
+            y,
+            radius * 0.94,
             start,
             end
         );
@@ -537,253 +452,18 @@ function drawRuneSegments(
     }
 
 
-    ctx.restore();
-}
-
-
-// --------------------------------------------------
-// Geometric symbols
-// --------------------------------------------------
-
-function drawGeometricSymbols(
-    cx,
-    cy,
-    radius,
-    rotation,
-    count,
-    alpha
-) {
-
-    ctx.save();
-
-    ctx.globalAlpha = alpha;
-
-    ctx.strokeStyle = "#ffe6a1";
-
-    ctx.lineWidth = 1.5;
-
-    ctx.shadowColor = "#ffb52e";
-
-    ctx.shadowBlur = 5;
-
-
-    for (
-        let i = 0;
-        i < count;
-        i++
-    ) {
-
-        const angle =
-            rotation +
-            i *
-            ((Math.PI * 2) / count);
-
-
-        const x =
-            cx +
-            radius *
-            Math.cos(angle);
-
-        const y =
-            cy +
-            radius *
-            Math.sin(angle);
-
-
-        const size =
-            Math.max(
-                4,
-                radius * 0.06
-            );
-
-
-        ctx.beginPath();
-
-
-        if (i % 3 === 0) {
-
-            ctx.moveTo(
-                x,
-                y - size
-            );
-
-            ctx.lineTo(
-                x - size * 0.866,
-                y + size * 0.5
-            );
-
-            ctx.lineTo(
-                x + size * 0.866,
-                y + size * 0.5
-            );
-
-            ctx.closePath();
-
-        } else if (i % 3 === 1) {
-
-            ctx.moveTo(
-                x,
-                y - size
-            );
-
-            ctx.lineTo(
-                x + size,
-                y
-            );
-
-            ctx.lineTo(
-                x,
-                y + size
-            );
-
-            ctx.lineTo(
-                x - size,
-                y
-            );
-
-            ctx.closePath();
-
-        } else {
-
-            ctx.arc(
-                x,
-                y,
-                size,
-                0,
-                Math.PI * 2
-            );
-        }
-
-
-        ctx.stroke();
-    }
-
-
-    ctx.restore();
-}
-
-
-// --------------------------------------------------
-// Magic circle
-// --------------------------------------------------
-
-function drawMagicCircle(
-    cx,
-    cy,
-    radius,
-    time,
-    intensity = 1
-) {
-
-    const alpha =
-        clamp(
-            intensity,
-            0,
-            1
-        );
-
-
-    ctx.save();
-
-
-    // Outer glow
-
-    for (
-        let i = 0;
-        i < 3;
-        i++
-    ) {
-
-        ctx.globalAlpha =
-            alpha *
-            (0.18 - i * 0.04);
-
-        ctx.strokeStyle =
-            "#ff8c1a";
-
-        ctx.lineWidth = 3;
-
-        ctx.shadowColor =
-            "#ff7a00";
-
-        ctx.shadowBlur = 25;
-
-
-        ctx.beginPath();
-
-        ctx.arc(
-            cx,
-            cy,
-            radius *
-            (1.15 + i * 0.08),
-            0,
-            Math.PI * 2
-        );
-
-        ctx.stroke();
-    }
-
-
-    ctx.globalAlpha = alpha;
-
-
-    // Main circle
-
-    ctx.strokeStyle = "#ffe6a1";
-
-    ctx.lineWidth = 2.5;
-
-    ctx.shadowColor = "#ff9d1c";
-
-    ctx.shadowBlur = 15;
-
-
-    ctx.beginPath();
-
-    ctx.arc(
-        cx,
-        cy,
-        radius,
-        0,
-        Math.PI * 2
-    );
-
-    ctx.stroke();
-
-
-    // Outer runes
-
-    drawRuneSegments(
-        cx,
-        cy,
-        radius * 0.95,
-        time * 0.8,
-        36,
-        1.5,
-        alpha * 0.9
-    );
-
-
-    drawRuneSegments(
-        cx,
-        cy,
-        radius * 0.9,
-        -time * 0.6,
-        24,
-        2,
-        alpha * 0.7
-    );
-
-
-    // Octagon
+    /*
+        Inner octagon
+    */
 
     ctx.strokeStyle =
-        "#ffd66b";
+        "#ffcc66";
 
-    ctx.lineWidth = 2;
+    ctx.lineWidth =
+        2;
+
 
     ctx.beginPath();
-
 
     for (
         let i = 0;
@@ -792,41 +472,56 @@ function drawMagicCircle(
     ) {
 
         const angle =
-            time * 0.5 +
-            i *
-            (Math.PI / 4);
+            rotation +
+            i * Math.PI / 4;
 
 
-        const x =
-            cx +
-            radius *
-            0.82 *
+        const px =
+            x +
+            radius * 0.67 *
             Math.cos(angle);
 
-        const y =
-            cy +
-            radius *
-            0.82 *
+        const py =
+            y +
+            radius * 0.67 *
             Math.sin(angle);
 
 
         if (i === 0) {
 
-            ctx.moveTo(x, y);
+            ctx.moveTo(px, py);
 
         } else {
 
-            ctx.lineTo(x, y);
+            ctx.lineTo(px, py);
         }
     }
-
 
     ctx.closePath();
 
     ctx.stroke();
 
 
-    // Radial markings
+    /*
+        Inner circle
+    */
+
+    ctx.beginPath();
+
+    ctx.arc(
+        x,
+        y,
+        radius * 0.43,
+        0,
+        Math.PI * 2
+    );
+
+    ctx.stroke();
+
+
+    /*
+        Radial lines
+    */
 
     for (
         let i = 0;
@@ -835,215 +530,71 @@ function drawMagicCircle(
     ) {
 
         const angle =
-            -time * 0.4 +
+            rotation +
             i *
-            (Math.PI / 6);
+            Math.PI / 6;
 
-
-        const outer =
-            radius * 0.82;
 
         const inner =
-            radius * 0.65;
+            radius * 0.45;
 
-
-        const x1 =
-            cx +
-            outer *
-            Math.cos(angle);
-
-        const y1 =
-            cy +
-            outer *
-            Math.sin(angle);
-
-
-        const x2 =
-            cx +
-            inner *
-            Math.cos(angle);
-
-        const y2 =
-            cy +
-            inner *
-            Math.sin(angle);
-
-
-        ctx.strokeStyle =
-            "#ffb52e";
-
-        ctx.lineWidth = 1.5;
+        const outer =
+            radius * 0.64;
 
 
         ctx.beginPath();
 
         ctx.moveTo(
-            x1,
-            y1
+            x +
+            inner *
+            Math.cos(angle),
+
+            y +
+            inner *
+            Math.sin(angle)
         );
 
         ctx.lineTo(
-            x2,
-            y2
+            x +
+            outer *
+            Math.cos(angle),
+
+            y +
+            outer *
+            Math.sin(angle)
         );
-
-        ctx.stroke();
-
-
-        ctx.fillStyle =
-            "#ffe6a1";
-
-
-        ctx.beginPath();
-
-        ctx.arc(
-            x2,
-            y2,
-            3,
-            0,
-            Math.PI * 2
-        );
-
-        ctx.fill();
-    }
-
-
-    // Inner circle
-
-    ctx.strokeStyle =
-        "#ff9b25";
-
-    ctx.lineWidth = 2;
-
-
-    ctx.beginPath();
-
-    ctx.arc(
-        cx,
-        cy,
-        radius * 0.65,
-        0,
-        Math.PI * 2
-    );
-
-    ctx.stroke();
-
-
-    // Rotating squares
-
-    for (
-        const offset of [
-            0,
-            Math.PI / 4
-        ]
-    ) {
-
-        ctx.beginPath();
-
-
-        for (
-            let i = 0;
-            i < 4;
-            i++
-        ) {
-
-            const angle =
-                time * 1.5 +
-                offset +
-                i *
-                (Math.PI / 2);
-
-
-            const x =
-                cx +
-                radius *
-                0.5 *
-                Math.cos(angle);
-
-            const y =
-                cy +
-                radius *
-                0.5 *
-                Math.sin(angle);
-
-
-            if (i === 0) {
-
-                ctx.moveTo(
-                    x,
-                    y
-                );
-
-            } else {
-
-                ctx.lineTo(
-                    x,
-                    y
-                );
-            }
-        }
-
-
-        ctx.closePath();
 
         ctx.stroke();
     }
 
 
-    // Symbols
-
-    drawGeometricSymbols(
-        cx,
-        cy,
-        radius * 0.35,
-        -time * 2,
-        6,
-        alpha
-    );
-
-
-    // Center pulse
+    /*
+        Center
+    */
 
     const pulse =
-        0.5 +
-        0.5 *
-        Math.sin(time * 8);
-
-
-    ctx.fillStyle =
-        "#ffb52e";
-
-    ctx.globalAlpha =
-        alpha * 0.5;
-
-
-    ctx.beginPath();
-
-    ctx.arc(
-        cx,
-        cy,
-        radius * 0.15,
-        0,
-        Math.PI * 2
-    );
-
-    ctx.fill();
-
-
-    ctx.globalAlpha = alpha;
+        5 +
+        Math.sin(
+            performance.now() / 150
+        ) * 3;
 
 
     ctx.fillStyle =
         "#ffe6a1";
 
+    ctx.shadowColor =
+        "#ff9d1c";
+
+    ctx.shadowBlur =
+        20;
+
 
     ctx.beginPath();
 
     ctx.arc(
-        cx,
-        cy,
-        radius * 0.05 +
-        5 * pulse,
+        x,
+        y,
+        pulse,
         0,
         Math.PI * 2
     );
@@ -1055,11 +606,11 @@ function drawMagicCircle(
 }
 
 
-// --------------------------------------------------
-// Drawing path
-// --------------------------------------------------
+// ==================================================
+// DRAWING TRAIL
+// ==================================================
 
-function drawPath() {
+function drawTrail() {
 
     if (
         drawingPoints.length < 2
@@ -1074,16 +625,20 @@ function drawPath() {
     ctx.strokeStyle =
         "#ffb52e";
 
-    ctx.lineWidth = 3;
+    ctx.lineWidth =
+        4;
 
-    ctx.lineCap = "round";
+    ctx.lineCap =
+        "round";
 
-    ctx.lineJoin = "round";
+    ctx.lineJoin =
+        "round";
 
     ctx.shadowColor =
-        "#ff7a18";
+        "#ff7a00";
 
-    ctx.shadowBlur = 15;
+    ctx.shadowBlur =
+        18;
 
 
     ctx.beginPath();
@@ -1113,225 +668,323 @@ function drawPath() {
 }
 
 
-// --------------------------------------------------
-// MediaPipe
-// --------------------------------------------------
+// ==================================================
+// CIRCLE DETECTION
+// ==================================================
 
-function onResults(results) {
-
-    leftFistPresent = false;
-
-    rightHand = null;
-
+function detectCircle() {
 
     if (
-        !results.multiHandLandmarks ||
-        !results.multiHandedness
+        drawingPoints.length < 25
+    ) {
+
+        return null;
+    }
+
+
+    const first =
+        drawingPoints[0];
+
+    const last =
+        drawingPoints[
+            drawingPoints.length - 1
+        ];
+
+
+    const closeDistance =
+        distance(
+            first,
+            last
+        );
+
+
+    /*
+        The end of the drawing must
+        be close to the beginning.
+    */
+
+    if (
+        closeDistance > 70
+    ) {
+
+        return null;
+    }
+
+
+    /*
+        Calculate center.
+    */
+
+    let cx = 0;
+    let cy = 0;
+
+
+    for (
+        const point of drawingPoints
+    ) {
+
+        cx += point.x;
+        cy += point.y;
+    }
+
+
+    cx /=
+        drawingPoints.length;
+
+    cy /=
+        drawingPoints.length;
+
+
+    /*
+        Calculate radius.
+    */
+
+    let radius = 0;
+
+
+    for (
+        const point of drawingPoints
+    ) {
+
+        radius +=
+            Math.hypot(
+                point.x - cx,
+                point.y - cy
+            );
+    }
+
+
+    radius /=
+        drawingPoints.length;
+
+
+    /*
+        Require a reasonable circle.
+    */
+
+    if (
+        radius < 70
+    ) {
+
+        return null;
+    }
+
+
+    return {
+        x: cx,
+        y: cy,
+        radius
+    };
+}
+
+
+// ==================================================
+// PARTICLES
+// ==================================================
+
+function createSpark(x, y) {
+
+    sparks.push({
+
+        x,
+
+        y,
+
+        vx:
+            (Math.random() - 0.5)
+            * 6,
+
+        vy:
+            (Math.random() - 0.5)
+            * 6,
+
+        life:
+            1
+    });
+}
+
+
+function updateSparks() {
+
+    for (
+        let i = sparks.length - 1;
+        i >= 0;
+        i--
+    ) {
+
+        const spark =
+            sparks[i];
+
+
+        spark.x +=
+            spark.vx;
+
+        spark.y +=
+            spark.vy;
+
+        spark.life -=
+            0.025;
+
+
+        if (
+            spark.life <= 0
+        ) {
+
+            sparks.splice(i, 1);
+
+            continue;
+        }
+
+
+        ctx.save();
+
+        ctx.globalAlpha =
+            spark.life;
+
+        ctx.fillStyle =
+            "#ffb52e";
+
+        ctx.shadowColor =
+            "#ff7a00";
+
+        ctx.shadowBlur =
+            15;
+
+
+        ctx.beginPath();
+
+        ctx.arc(
+            spark.x,
+            spark.y,
+            3,
+            0,
+            Math.PI * 2
+        );
+
+        ctx.fill();
+
+        ctx.restore();
+    }
+}
+
+
+function createPortalParticles() {
+
+    if (
+        Math.random() > 0.75
     ) {
 
         return;
     }
 
 
+    const angle =
+        Math.random() *
+        Math.PI *
+        2;
+
+
+    const radius =
+        portalRadius *
+        (
+            0.8 +
+            Math.random() * 0.4
+        );
+
+
+    particles.push({
+
+        x:
+            portalCenter.x +
+            Math.cos(angle) *
+            radius,
+
+        y:
+            portalCenter.y +
+            Math.sin(angle) *
+            radius,
+
+        vx:
+            (Math.random() - 0.5)
+            * 2,
+
+        vy:
+            (Math.random() - 0.5)
+            * 2,
+
+        life:
+            1
+    });
+}
+
+
+function updateParticles() {
+
     for (
-        let i = 0;
-        i < results.multiHandLandmarks.length;
-        i++
+        let i = particles.length - 1;
+        i >= 0;
+        i--
     ) {
 
-        const landmarks =
-            results.multiHandLandmarks[i];
-
-        const handedness =
-            results.multiHandedness[i]
-                .classification[0]
-                .label;
+        const particle =
+            particles[i];
 
 
-        /*
-            MediaPipe sees the mirrored camera.
+        particle.x +=
+            particle.vx;
 
-            "Right" corresponds to the user's
-            physical left hand when the video
-            is mirrored.
-        */
+        particle.y +=
+            particle.vy;
 
-        const userLeft =
-            handedness === "Right";
-
-        const userRight =
-            handedness === "Left";
-
-
-        const open =
-            isPalmOpen(landmarks);
-
-        const fist =
-            isFist(landmarks);
-
-
-        const center =
-            palmCenter(landmarks);
-
-        const size =
-            palmSize(landmarks);
-
-
-        if (userLeft) {
-
-            if (fist) {
-
-                leftFistPresent = true;
-
-            } else if (
-                open &&
-                !portalActive &&
-                drawingPoints.length === 0
-            ) {
-
-                drawMagicCircle(
-                    center.x,
-                    center.y,
-                    size * 1.5,
-                    performance.now() / 1000,
-                    0.8
-                );
-            }
-        }
-
-
-        if (userRight) {
-
-            rightHand = landmarks;
-
-
-            if (
-                open &&
-                !portalActive &&
-                drawingPoints.length === 0
-            ) {
-
-                drawMagicCircle(
-                    center.x,
-                    center.y,
-                    size * 1.5,
-                    performance.now() / 1000,
-                    0.8
-                );
-            }
-        }
-    }
-
-
-    // ------------------------------------------------
-    // Left fist + right index finger
-    // ------------------------------------------------
-
-    if (
-        leftFistPresent &&
-        rightHand &&
-        !portalActive
-    ) {
-
-        const index =
-            rightHand[8];
-
-
-        const x =
-            index.x *
-            canvas.width;
-
-        const y =
-            index.y *
-            canvas.height;
-
-
-        drawingPoints.push({
-            x,
-            y
-        });
-
-
-        // Create sparks
-
-        for (
-            let i = 0;
-            i < 4;
-            i++
-        ) {
-
-            sparks.push(
-                new Spark(
-                    x,
-                    y
-                )
-            );
-        }
+        particle.life -=
+            0.015;
 
 
         if (
-            drawingPoints.length > 100
+            particle.life <= 0
         ) {
 
-            drawingPoints.shift();
+            particles.splice(i, 1);
+
+            continue;
         }
 
 
-        const circle =
-            checkCircleGesture(
-                drawingPoints,
-                250,
-                50
-            );
+        ctx.save();
+
+        ctx.globalAlpha =
+            particle.life;
+
+        ctx.fillStyle =
+            "#ffd166";
+
+        ctx.shadowColor =
+            "#ff8c00";
+
+        ctx.shadowBlur =
+            10;
 
 
-        if (circle.detected) {
+        ctx.beginPath();
 
-            portalActive = true;
+        ctx.arc(
+            particle.x,
+            particle.y,
+            2,
+            0,
+            Math.PI * 2
+        );
 
-            portalCenter =
-                circle.center;
+        ctx.fill();
 
-            portalRadius =
-                Math.max(
-                    circle.radius,
-                    120
-                ) * 1.2;
-
-
-            drawingPoints = [];
-        }
-
-    } else if (!portalActive) {
-
-        drawingPoints = [];
-    }
-
-
-    if (portalActive) {
-
-        portalIntensity =
-            Math.min(
-                1,
-                portalIntensity +
-                0.03
-            );
-
-    } else {
-
-        portalIntensity =
-            Math.max(
-                0,
-                portalIntensity -
-                0.03
-            );
+        ctx.restore();
     }
 }
 
 
-// --------------------------------------------------
-// Animation
-// --------------------------------------------------
+// ==================================================
+// MAIN ANIMATION LOOP
+// ==================================================
 
 function animate() {
 
@@ -1340,36 +993,26 @@ function animate() {
     );
 
 
-    const now =
-        performance.now();
+    if (
+        !video.videoWidth
+    ) {
 
-
-    const dt =
-        Math.min(
-            0.05,
-            (now - lastTime) / 1000
-        );
-
-
-    lastTime = now;
+        return;
+    }
 
 
     if (
-        canvas.width !== video.videoWidth ||
-        canvas.height !== video.videoHeight
+        canvas.width !==
+        video.videoWidth ||
+        canvas.height !==
+        video.videoHeight
     ) {
 
-        if (
-            video.videoWidth &&
-            video.videoHeight
-        ) {
+        canvas.width =
+            video.videoWidth;
 
-            canvas.width =
-                video.videoWidth;
-
-            canvas.height =
-                video.videoHeight;
-        }
+        canvas.height =
+            video.videoHeight;
     }
 
 
@@ -1382,136 +1025,345 @@ function animate() {
 
 
     const time =
-        (now - startTime) /
+        performance.now() /
         1000;
 
 
-    // Draw path
+    /*
+        Draw detected hands.
+    */
 
-    drawPath();
+    drawHandTracking();
 
 
-    // Portal
+    /*
+        OPEN HAND EFFECT
+    */
+
+    for (
+        const hand of detectedHands
+    ) {
+
+        if (
+            hand.open &&
+            !portalActive
+        ) {
+
+            const center =
+                getHandCenter(
+                    hand.landmarks
+                );
+
+            const radius =
+                getHandRadius(
+                    hand.landmarks
+                ) * 1.8;
+
+
+            drawMagicCircle(
+                center.x,
+                center.y,
+                radius,
+                time,
+                0.9
+            );
+        }
+    }
+
+
+    /*
+        LEFT FIST + RIGHT INDEX
+    */
+
+    const leftFist =
+        detectedHands.some(
+            hand =>
+                hand.handedness === "Right" &&
+                hand.fist
+        );
+
+
+    const rightHand =
+        detectedHands.find(
+            hand =>
+                hand.handedness === "Left"
+        );
+
 
     if (
-        portalActive ||
-        portalIntensity > 0.05
+        leftFist &&
+        rightHand &&
+        !portalActive
     ) {
+
+        const index =
+            getCanvasPoint(
+                rightHand.landmarks[8]
+            );
+
+
+        /*
+            Add point.
+        */
+
+        drawingPoints.push(
+            index
+        );
+
+
+        if (
+            drawingPoints.length > 180
+        ) {
+
+            drawingPoints.shift();
+        }
+
+
+        /*
+            Sparks from finger.
+        */
+
+        if (
+            Math.random() < 0.6
+        ) {
+
+            createSpark(
+                index.x,
+                index.y
+            );
+        }
+
+
+        /*
+            Check circle.
+        */
+
+        const circle =
+            detectCircle();
+
+
+        if (circle) {
+
+            portalActive =
+                true;
+
+            portalCenter = {
+                x: circle.x,
+                y: circle.y
+            };
+
+            portalRadius =
+                circle.radius;
+
+            drawingPoints = [];
+
+            statusText.textContent =
+                "PORTAL ACTIVE";
+        }
+
+    } else if (!portalActive) {
+
+        /*
+            Don't immediately clear
+            the trail. This makes drawing
+            easier.
+        */
+
+        if (
+            drawingPoints.length > 0
+        ) {
+
+            drawingPoints.shift();
+        }
+    }
+
+
+    /*
+        Draw trail.
+    */
+
+    if (
+        !portalActive
+    ) {
+
+        drawTrail();
+    }
+
+
+    /*
+        PORTAL
+    */
+
+    if (
+        portalActive
+    ) {
+
+        portalStrength =
+            Math.min(
+                1,
+                portalStrength +
+                0.025
+            );
+
 
         drawMagicCircle(
             portalCenter.x,
             portalCenter.y,
             portalRadius,
             time,
-            portalIntensity
+            portalStrength
         );
 
 
-        // Spawn portal particles
+        createPortalParticles();
+
+
+        /*
+            Extra sparks around portal.
+        */
 
         if (
-            Math.random() <
-            0.8 *
-            portalIntensity
+            Math.random() < 0.3
         ) {
 
-            for (
-                let i = 0;
-                i < 2;
-                i++
-            ) {
+            const angle =
+                Math.random() *
+                Math.PI *
+                2;
 
-                portalParticles.push(
-                    new Particle(
-                        portalCenter.x,
-                        portalCenter.y,
-                        portalRadius
-                    )
+
+            createSpark(
+
+                portalCenter.x +
+                Math.cos(angle) *
+                portalRadius,
+
+                portalCenter.y +
+                Math.sin(angle) *
+                portalRadius
+            );
+        }
+
+    } else {
+
+        portalStrength =
+            Math.max(
+                0,
+                portalStrength -
+                0.03
+            );
+    }
+
+
+    updateSparks();
+
+    updateParticles();
+}
+
+
+// ==================================================
+// START MEDIAPIPE
+// ==================================================
+
+async function startTracking() {
+
+    try {
+
+        statusText.textContent =
+            "Starting hand tracking...";
+
+
+        hands = new Hands({
+
+            locateFile: function(file) {
+
+                return (
+                    "https://cdn.jsdelivr.net/npm/@mediapipe/hands/" +
+                    file
                 );
             }
-        }
-    }
+        });
 
 
-    // Sparks
+        hands.setOptions({
 
-    for (
-        let i = sparks.length - 1;
-        i >= 0;
-        i--
-    ) {
+            maxNumHands: 2,
 
-        const spark =
-            sparks[i];
+            modelComplexity: 1,
 
+            minDetectionConfidence: 0.5,
 
-        if (
-            spark.update(dt)
-        ) {
-
-            spark.draw();
-
-        } else {
-
-            sparks.splice(i, 1);
-        }
-    }
+            minTrackingConfidence: 0.5
+        });
 
 
-    // Portal particles
-
-    for (
-        let i =
-            portalParticles.length - 1;
-        i >= 0;
-        i--
-    ) {
-
-        const particle =
-            portalParticles[i];
-
-
-        if (
-            particle.update(dt)
-        ) {
-
-            particle.draw();
-
-        } else {
-
-            portalParticles.splice(i, 1);
-        }
-    }
-
-
-    // Limit particles
-
-    if (
-        sparks.length > 300
-    ) {
-
-        sparks.splice(
-            0,
-            sparks.length - 200
+        hands.onResults(
+            onResults
         );
-    }
 
 
-    if (
-        portalParticles.length > 400
-    ) {
+        camera =
+            new Camera(
+                video,
+                {
 
-        portalParticles.splice(
-            0,
-            portalParticles.length - 300
+                    onFrame:
+                        async function() {
+
+                            await hands.send({
+                                image: video
+                            });
+                        },
+
+                    width: 1280,
+
+                    height: 720
+                }
+            );
+
+
+        camera.start();
+
+
+        loading.classList.add(
+            "hidden"
+        );
+
+
+        statusDot.classList.add(
+            "active"
+        );
+
+
+        statusText.textContent =
+            "Hand tracking active";
+
+
+        requestAnimationFrame(
+            animate
+        );
+
+    } catch (error) {
+
+        console.error(
+            "MediaPipe error:",
+            error
+        );
+
+
+        statusText.textContent =
+            "Hand tracking failed";
+
+        statusDot.classList.remove(
+            "active"
         );
     }
 }
 
 
-// --------------------------------------------------
-// Camera
-// --------------------------------------------------
+// ==================================================
+// CAMERA
+// ==================================================
 
 async function startCamera() {
 
@@ -1547,26 +1399,16 @@ async function startCamera() {
         await video.play();
 
 
-        loading.classList.add(
-            "hidden"
-        );
-
         permission.classList.add(
             "hidden"
         );
 
 
         statusText.textContent =
-            "Camera active";
+            "Camera connected";
 
 
-        statusDot.classList.add(
-            "active"
-        );
-
-
-        setupMediaPipe();
-
+        await startTracking();
 
     } catch (error) {
 
@@ -1587,127 +1429,22 @@ async function startCamera() {
 
         statusText.textContent =
             "Camera permission required";
-
-
-        statusDot.classList.remove(
-            "active"
-        );
     }
 }
 
 
-// --------------------------------------------------
-// MediaPipe initialization
-// --------------------------------------------------
-
-function setupMediaPipe() {
-
-    hands =
-        new Hands({
-
-            locateFile: (
-                file
-            ) => {
-
-                return `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`;
-            }
-        });
-
-
-    hands.setOptions({
-
-        maxNumHands: 2,
-
-        modelComplexity: 1,
-
-        minDetectionConfidence: 0.6,
-
-        minTrackingConfidence: 0.6
-    });
-
-
-    hands.onResults(
-        onResults
-    );
-
-
-    camera =
-        new Camera(
-            video,
-            {
-
-                onFrame: async () => {
-
-                    await hands.send({
-                        image: video
-                    });
-                },
-
-                width: 1280,
-
-                height: 720
-            }
-        );
-
-
-    camera.start();
-
-
-    running = true;
-
-
-    startTime =
-        performance.now();
-
-    lastTime =
-        performance.now();
-
-
-    requestAnimationFrame(
-        animate
-    );
-}
-
-
-// --------------------------------------------------
-// Start button
-// --------------------------------------------------
+// ==================================================
+// START BUTTON
+// ==================================================
 
 startButton.addEventListener(
     "click",
-    () => {
-
-        startCamera();
-    }
+    startCamera
 );
 
 
-// --------------------------------------------------
-// Browser compatibility
-// --------------------------------------------------
-
-if (
-    !navigator.mediaDevices ||
-    !navigator.mediaDevices.getUserMedia
-) {
-
-    loading.classList.add(
-        "hidden"
-    );
-
-    permission.classList.remove(
-        "hidden"
-    );
-
-
-    permission.querySelector("p")
-        .textContent =
-        "Your browser does not support webcam access. Please use a recent version of Chrome or Edge.";
-}
-
-
-// --------------------------------------------------
-// Start
-// --------------------------------------------------
+// ==================================================
+// START
+// ==================================================
 
 startCamera();
