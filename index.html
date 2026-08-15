@@ -1,0 +1,131 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+
+    <meta
+        name="viewport"
+        content="width=device-width, initial-scale=1.0"
+    >
+
+    <title>Doctor Strange Portal</title>
+
+    <link rel="stylesheet" href="style.css">
+</head>
+
+<body>
+
+    <div class="app">
+
+        <header class="topbar">
+            <div>
+                <h1>Doctor Strange Portal</h1>
+                <p>Hand-controlled magical portal experiment</p>
+            </div>
+
+            <div class="status">
+                <span id="statusDot"></span>
+                <span id="statusText">Starting camera...</span>
+            </div>
+        </header>
+
+
+        <main class="stage">
+
+            <video
+                id="video"
+                autoplay
+                playsinline
+                muted
+            ></video>
+
+            <canvas id="canvas"></canvas>
+
+            <div id="loading" class="loading">
+                <div class="loader"></div>
+                <h2>Initializing Magic</h2>
+                <p>Allow camera access to begin.</p>
+            </div>
+
+            <div id="permission" class="permission hidden">
+                <h2>Camera Access Required</h2>
+                <p>
+                    Please allow camera access in your browser
+                    to use the hand-controlled effects.
+                </p>
+
+                <button id="startButton">
+                    Enable Camera
+                </button>
+            </div>
+
+        </main>
+
+
+        <section class="controls">
+
+            <div class="instruction">
+                <div class="number">01</div>
+
+                <div>
+                    <h3>Open Palm</h3>
+                    <p>
+                        Show an open palm to reveal the magical runes.
+                    </p>
+                </div>
+            </div>
+
+
+            <div class="instruction">
+                <div class="number">02</div>
+
+                <div>
+                    <h3>Draw a Portal</h3>
+                    <p>
+                        Make a fist with your left hand and use
+                        your right index finger to draw a circle.
+                    </p>
+                </div>
+            </div>
+
+
+            <div class="instruction">
+                <div class="number">03</div>
+
+                <div>
+                    <h3>Activate</h3>
+                    <p>
+                        Complete the circle and hold the gesture
+                        to activate the portal.
+                    </p>
+                </div>
+            </div>
+
+        </section>
+
+
+        <footer>
+            <span>Hand Tracking</span>
+            <span>•</span>
+            <span>Canvas Effects</span>
+            <span>•</span>
+            <span>MediaPipe</span>
+        </footer>
+
+    </div>
+
+
+    <script
+        src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js"
+        crossorigin="anonymous">
+    </script>
+
+    <script
+        src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js"
+        crossorigin="anonymous">
+    </script>
+
+    <script src="app.js"></script>
+
+</body>
+</html>
